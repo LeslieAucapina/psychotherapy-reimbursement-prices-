@@ -1,0 +1,156 @@
+import os
+import json
+import pandas as pd
+import time
+
+ # Define the directory path containing the JSON files
+directory_path = "insert/relative/path/of/directory/"
+
+# Initialize an empty list to store the results and a dictionary to store record counts
+all_data = []
+record_counts = {}
+
+for filename in os.listdir(directory_path):
+    if filename.endswith('.json'):
+        try:
+            file_path = os.path.join(directory_path, filename)
+            
+            # Read the JSON data from the file
+            with open(file_path, 'r') as file:
+                data = json.load(file)
+            
+            # Extract the name without '.json'
+            file_name_without_ext = os.path.splitext(filename)[0]
+
+            # Step 1: Flatten 'provider_references' and count NPIs
+            provider_references_list = []
+            if 'provider_references' in data:
+                for entry in data['provider_references']:
+                    base_info = {
+                        'provider_group_id': entry.get('provider_group_id', ''),
+                    }
+                    
+                    # Flatten 'provider_groups' if present
+                    if 'provider_groups' in entry:
+                        npi_count = sum(len(group.get('npi', [])) for group in entry['provider_groups'])
+                        group_info = {
+                            'npi_count': npi_count
+                        }
+                        combined_info = {**base_info, **group_info}
+                        provider_references_list.append(combined_info)
+            
+            # Create a DataFrame from the list of flattened data
+            provider_references_df = pd.DataFrame(provider_references_list)
+            
+            # Step 2: Process 'in_network' and flatten nested structures
+            in_network_expire_list = []
+            
+            if 'in_network' in data:
+                for entry in data['in_network']:  # Process all entries
+                    start_time = time.time()  # Record the start time
+
+                    base_info = {
+                        'name': entry.get('name', ''),
+                        'billing_code_type': entry.get('billing_code_type', ''),
+                        'billing_code_type_version': entry.get('billing_code_type_version', ''),
+                        'billing_code': entry.get('billing_code', ''),
+                    }
+
+                    for rate in entry.get('negotiated_rates', []):
+                        for price in rate.get('negotiated_prices', []):
+                            expiration_date = price.get('expiration_date', '')  # Extract expiration_date from price
+                            for provider_ref in rate.get('provider_references', []):
+                                provider_group_info = provider_references_df[provider_references_df['provider_group_id'] == provider_ref]
+                                
+                                if not provider_group_info.empty:
+                                    combined_info = {
+                                        **base_info,
+                                        **provider_group_info.to_dict(orient='records')[0],  # Get the first record (assuming there's only one match)
+                                        'provider_reference': provider_ref,
+                                        'negotiated_type': price.get('negotiated_type', ''),
+                                        'negotiated_rate': price.get('negotiated_rate', 0.0),
+                                        'expiration_date': expiration_date  # Add expiration_date to combined_info
+                                    }
+                                    in_network_expire_list.append(combined_info)
+                                else:
+                                    # Debugging: Print message when provider_group_info is empty
+                                    print(f"No provider group info found for provider_reference: {provider_ref}")
+
+                    elapsed_time = time.time() - start_time  # Calculate the elapsed time
+                    
+                    if elapsed_time > 5:
+                        print(f"Processing entry {entry.get('name', '')} took more than 5 seconds, skipping to the next.")
+                        continue
+            
+            # Create a DataFrame from the list of flattened data and include the expiration_dates 
+            in_network_expire_df = pd.DataFrame(in_network_expire_list)
+            
+            # Define the list of billing codes to filter by, psychotherapy CPT codes
+            billing_codes_to_filter = ['90832', '90834', '90837', '90785', '90833']
+            
+            # Filter the DataFrame by the specified billing codes
+            rates_in_network = in_network_expire_df[in_network_expire_df['billing_code'].isin(billing_codes_to_filter)]
+
+            # Append the processed DataFrame to the list
+            all_data.append(rates_in_network)
+            
+            # Store the count of records for the current file
+            record_counts[file_name_without_ext] = len(rates_in_network)
+
+        except json.JSONDecodeError:
+            print(f"Error decoding JSON from file: {filename}")
+    
+# Concatenate all DataFrames into a single DataFrame
+try:
+    final_df_trial = pd.concat(all_data, ignore_index=True)
+
+    # Display the resulting DataFrame
+    print(final_df_trial)
+
+    # Count the number of records from each file and store in a dictionary 
+    for file_name, count in record_counts.items():
+        print(f"File: {file_name}, Record Count: {count}")
+
+    # Print the entire record_counts dictionary
+    print("Record counts for each file:", record_counts)
+    
+except ValueError as ve:
+    print(f"Error concatenating dataframes: {ve}")
+
+
+# Create a separate Dataframe, file_info , for the file name and link
+# Each file name and link is repeated according to how many of their records are in the final_df_trial dataframe
+file_info_list = []
+
+for file_name, count in record_counts.items():
+    file_info_list.extend([{'file_name': file_name}] * count)
+
+file_info_df = pd.DataFrame(file_info_list)
+
+# Ensure the total rows in file_info_df equal to final_df_trial
+assert len(file_info_df) == len(final_df_trial)
+
+# Display the file_info DataFrame
+print(file_info_df)
+
+ # Check the file_name count is right 
+
+# Count the occurrences of each link
+file_name_counts = file_info_df['file_name'].value_counts()
+
+# Get the count for the specific link
+count_specific_file_name = file_name_counts['2024-06-13-External_2024-05-31_FirstChoice_cms_in_network_rates_AK']
+
+print(f"The name 2024-06-13-External_2024-05-31_FirstChoice_cms_in_network_rates_AK' appears {count_specific_file_name} times.")
+
+
+ # Concatenate all DataFrames into a single DataFrame
+
+try:
+    # Concatenate all DataFrames into a single DataFrame
+    df_file_info_data = pd.concat([final_df_trial, file_info_df], axis=1)
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+else:
+    print("DataFrames concatenated successfully.")

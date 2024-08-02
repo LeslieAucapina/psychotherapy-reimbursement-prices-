@@ -1,0 +1,54 @@
+import json 
+import pandas as pd 
+import os
+
+# example file available publicly
+file_path='"insert/relative/path"'
+
+with open (file_path,'r') as file:
+    data = json.load(file)
+
+# Print dictionary keys to gain an understanding of the file's structure
+print(data.keys())
+
+# data available in 'in_network' key
+data['in_network'][0]
+
+# data available in 'provider_reference' key
+data['provider_references'][0]
+
+# Flatten 'provider_references' and limit to 15 rows if it's a list of dictionaries
+if 'provider_references' in data:
+    provider_references_df = pd.json_normalize(data['provider_references'])
+else:
+    provider_references_df = pd.DataFrame()
+
+provider_references_df
+
+
+# Flatten 'provider_references' and count NPIs to understand how many providers are shown in this example
+provider_references_list = []
+if 'provider_references' in data:
+    for entry in data['provider_references']:
+        base_info = {
+            'provider_group_id': entry.get('provider_group_id', ''),
+        }
+        
+        # Flatten 'provider_groups' if present
+        if 'provider_groups' in entry:
+            npi_count = sum(len(group.get('npi', [])) for group in entry['provider_groups'])
+            for group in entry['provider_groups']:
+                group_info = {
+                    'npi': group.get('npi', [])[0] if group.get('npi') else None,
+                    'tin_type': group.get('tin', {}).get('type', ''),
+                    'tin_value': group.get('tin', {}).get('value', ''),
+                    'npi_count': npi_count
+                }
+                combined_info = {**base_info, **group_info}
+                provider_references_list.append(combined_info)
+
+# Create a DataFrame from the list of flattened data
+provider_references_df = pd.DataFrame(provider_references_list)
+
+# Display the DataFrame with the new 'npi_count' column
+provider_references_df
